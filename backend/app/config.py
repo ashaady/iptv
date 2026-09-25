@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     database_path: Path = BACKEND_DIR / "data" / "fluxa.db"
     secret_key: str | None = None
     secret_key_path: Path = BACKEND_DIR / "data" / ".secret.key"
-    cors_origins: str = "http://localhost:3000,http://localhost:3001,https://fluxa-iptv.abtrunk4.chatgpt.site"
+    cors_origins: str = "http://localhost:3000,http://localhost:3001,https://iptv-mu-gilt.vercel.app,https://fluxa-iptv.abtrunk4.chatgpt.site"
     request_timeout_seconds: float = 20.0
     live_cache_seconds: int = 1800
     vod_cache_seconds: int = 21600
