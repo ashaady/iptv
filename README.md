@@ -1,36 +1,69 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Fluxa IPTV
 
-## Getting Started
+Lecteur IPTV responsive compatible Xtream Codes, composé d'un frontend Next.js et d'une API FastAPI.
 
-First, run the development server:
+## Lancer le backend
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+python run.py
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+API : `http://127.0.0.1:8000`
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Documentation Swagger : `http://127.0.0.1:8000/docs`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Lancer le frontend
 
-## Learn More
+À la racine du projet :
 
-To learn more about Next.js, take a look at the following resources:
+```powershell
+Copy-Item .env.example .env.local
+npm install
+npm run dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Frontend : `http://localhost:3000`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Sans `NEXT_PUBLIC_API_URL`, le frontend reste utilisable en mode démonstration. Avec l'adresse du backend configurée, le formulaire Xtream teste et sauvegarde réellement le profil.
 
-## Deploy on Vercel
+## Créer l'application Windows
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Depuis la racine du projet :
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```powershell
+npm install
+npm run dist:win
+```
+
+L'installateur est généré dans `release/Fluxa-IPTV-Setup-1.0.0.exe`. Il contient Electron, le frontend exporté et un exécutable FastAPI autonome : l'ordinateur cible n'a besoin ni de Node.js ni de Python.
+
+Les profils, favoris, historique et secrets locaux sont conservés dans `%APPDATA%\fluxa-iptv\data`. La désinstallation préserve ces données pour éviter leur perte.
+
+## Architecture
+
+```text
+src/                 Frontend Next.js / TypeScript
+backend/app/         API FastAPI
+backend/data/        Base SQLite et clé locale, exclues de Git
+backend/tests/       Tests d'intégration API
+electron/            Processus principal de l'application Windows
+scripts/             Scripts de compilation du frontend et du backend
+```
+
+Le backend conserve les mots de passe Xtream chiffrés, met en cache les catalogues, stocke les favoris et l'historique dans SQLite, et sert les flux à travers un proxy qui masque les identifiants IPTV.
+
+## Tests
+
+```powershell
+npm run lint
+npm run build
+cd backend
+.venv\Scripts\python.exe -m pytest -q
+```
+
+Cette application est uniquement un lecteur multimédia. Elle ne fournit ni chaîne, ni contenu, ni abonnement IPTV.

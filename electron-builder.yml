@@ -1,0 +1,42 @@
+appId: com.fluxa.iptv
+productName: Fluxa IPTV
+copyright: Copyright © 2026 Fluxa
+
+directories:
+  output: release
+
+files:
+  - electron/**/*
+  - package.json
+  - "!node_modules/**/*"
+
+extraResources:
+  - from: out
+    to: frontend
+    filter:
+      - "**/*"
+  - from: backend/dist/fluxa-backend.exe
+    to: backend/fluxa-backend.exe
+  - from: public/fluxa.ico
+    to: fluxa.ico
+
+asar: true
+
+win:
+  icon: public/fluxa.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: Fluxa-IPTV-Setup-${version}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Fluxa IPTV
+  uninstallDisplayName: Fluxa IPTV
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true

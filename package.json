@@ -1,15 +1,24 @@
 {
   "name": "fluxa-iptv",
-  "version": "0.1.0",
-  "private": true,
+  "version": "1.0.0",
+  "description": "Lecteur IPTV desktop compatible Xtream Codes",
+  "author": "Fluxa",
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "desktop": "concurrently -k -n \"NEXT,DESKTOP\" -c \"cyan,magenta\" \"next dev -p 3001\" \"wait-on http://localhost:3001 && electron .\"",
+    "desktop:app": "electron .",
+    "build:desktop-web": "node scripts/build-desktop-web.mjs",
+    "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
+    "dist:win": "npm run build:desktop-web && npm run build:backend && electron-builder --win nsis --x64"
   },
   "dependencies": {
+    "hls.js": "^1.7.2",
     "lucide-react": "^1.43.0",
+    "mpegts.js": "^1.8.2",
     "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8"
@@ -19,9 +28,13 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^10.0.5",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.0.12",
     "eslint": "^9",
     "eslint-config-next": "16.3.4",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wait-on": "^9.1.0"
   }
 }

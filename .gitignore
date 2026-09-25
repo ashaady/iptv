@@ -29,9 +29,15 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.log
+*.db
+*.db-shm
+*.db-wal
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+!backend/.env.example
 
 # vercel
 .vercel
@@ -39,3 +45,24 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# desktop installers and local build outputs
+/release/
+/backend/dist/
+/backend/build-pyinstaller/
+backend/.venv/
+backend/__pycache__/
+backend/*/__pycache__/
+backend/*/*/__pycache__/
+backend/.pytest_cache/
+backend/data/
+*.pyc
+*.pyo
+
+# scratch and logs
+.design-review/
+*.bak
+all_cats.txt
+.fastapicloud/
+backend/.fastapicloud/
+
