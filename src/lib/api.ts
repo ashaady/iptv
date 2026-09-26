@@ -134,6 +134,20 @@ export const fluxaApi = {
       const catParam = categoryId && categoryId !== "all" ? `&category_id=${encodeURIComponent(categoryId)}` : "";
       return request<LiveStream[]>(`/api/live/streams?profile_id=${encodeURIComponent(profileId)}${catParam}&include_adult=${includeAdult}`);
     },
+    probeBatch: (profileId: string, streamIds: (string | number)[]) =>
+      request<{ active_ids: string[] }>("/api/live/probe-batch", {
+        method: "POST",
+        body: JSON.stringify({ profile_id: profileId, stream_ids: streamIds }),
+      }),
+    activeChannels: {
+      list: (profileId: string) =>
+        request<LiveStream[]>(`/api/live/active-channels?profile_id=${encodeURIComponent(profileId)}`),
+      save: (profileId: string, channels: LiveStream[]) =>
+        request<{ status: string; saved: number }>("/api/live/active-channels", {
+          method: "POST",
+          body: JSON.stringify({ profile_id: profileId, channels }),
+        }),
+    },
   },
   vod: {
     categories: (profileId: string, includeAdult: boolean = true) =>

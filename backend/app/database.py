@@ -87,9 +87,19 @@ class Database:
                     FOREIGN KEY(profile_id) REFERENCES iptv_profiles(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS active_channels (
+                    profile_id TEXT NOT NULL,
+                    stream_id TEXT NOT NULL,
+                    channel_data TEXT NOT NULL,
+                    tested_at TEXT NOT NULL,
+                    PRIMARY KEY(profile_id, stream_id),
+                    FOREIGN KEY(profile_id) REFERENCES iptv_profiles(id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_favorites_profile ON favorites(profile_id);
                 CREATE INDEX IF NOT EXISTS idx_history_profile ON watch_history(profile_id, watched_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_cache_profile ON api_cache(profile_id, expires_at);
+                CREATE INDEX IF NOT EXISTS idx_active_channels_profile ON active_channels(profile_id, tested_at DESC);
                 """
             )
 

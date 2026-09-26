@@ -552,16 +552,42 @@ export function IptvApp() {
   const activeChannelIds = useMemo(() => Object.keys(activeChannelsMap), [activeChannelsMap]);
   const activeChannelsList = useMemo(() => Object.values(activeChannelsMap), [activeChannelsMap]);
 
-  // Chargement des chaînes actives depuis localStorage
+  // Chargement des chaînes actives depuis localStorage et synchronisation SQLite
   useEffect(() => {
     if (!activeProfile?.id) return;
+    const storageKey = `fluxa_active_channels_${activeProfile.id}`;
     try {
-      const saved = window.localStorage.getItem(`fluxa_active_channels_${activeProfile.id}`);
+      const saved = window.localStorage.getItem(storageKey);
       if (saved) {
         setActiveChannelsMap(JSON.parse(saved));
       }
     } catch {}
-  }, [activeProfile?.id]);
+
+    if (!activeProfile.isDemo) {
+      fluxaApi.live.activeChannels.list(activeProfile.id)
+        .then((dbChannels) => {
+          if (Array.isArray(dbChannels) && dbChannels.length > 0) {
+            setActiveChannelsMap((prev) => {
+              const merged = { ...prev };
+              let added = false;
+              for (const ch of dbChannels) {
+                if (ch?.stream_id && !merged[String(ch.stream_id)]) {
+                  merged[String(ch.stream_id)] = ch;
+                  added = true;
+                }
+              }
+              if (added) {
+                try {
+                  window.localStorage.setItem(storageKey, JSON.stringify(merged));
+                } catch {}
+              }
+              return merged;
+            });
+          }
+        })
+        .catch(() => {});
+    }
+  }, [activeProfile?.id, activeProfile?.isDemo]);
 
   const markChannelActive = useCallback((stream: LiveStream) => {
     if (!activeProfile?.id || !stream?.stream_id) return;
@@ -574,7 +600,33 @@ export function IptvApp() {
       } catch {}
       return next;
     });
-  }, [activeProfile?.id]);
+    if (!activeProfile.isDemo) {
+      fluxaApi.live.activeChannels.save(activeProfile.id, [stream]).catch(() => {});
+    }
+  }, [activeProfile?.id, activeProfile?.isDemo]);
+
+  const markChannelsActiveBatch = useCallback((streams: LiveStream[]) => {
+    if (!activeProfile?.id || streams.length === 0) return;
+    setActiveChannelsMap((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const s of streams) {
+        const idStr = String(s.stream_id);
+        if (!next[idStr]) {
+          next[idStr] = s;
+          changed = true;
+        }
+      }
+      if (!changed) return prev;
+      try {
+        window.localStorage.setItem(`fluxa_active_channels_${activeProfile.id}`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    if (!activeProfile.isDemo) {
+      fluxaApi.live.activeChannels.save(activeProfile.id, streams).catch(() => {});
+    }
+  }, [activeProfile?.id, activeProfile?.isDemo]);
 
   const markChannelInactive = useCallback((streamId: string | number) => {
     if (!activeProfile?.id || !streamId) return;
@@ -1477,6 +1529,7 @@ export function IptvApp() {
               activeChannelIds={activeChannelIds}
               activeChannelsList={activeChannelsList}
               markChannelActive={markChannelActive}
+              markChannelsActiveBatch={markChannelsActiveBatch}
               markChannelInactive={markChannelInactive}
               showAdult={showAdult}
             />
@@ -3270,6 +3323,7 @@ function LiveView({
   activeChannelIds = [],
   activeChannelsList = [],
   markChannelActive,
+  markChannelsActiveBatch,
   markChannelInactive,
   showAdult = true,
 }: {
@@ -3299,6 +3353,7 @@ function LiveView({
   activeChannelIds?: string[];
   activeChannelsList?: LiveStream[];
   markChannelActive?: (stream: LiveStream) => void;
+  markChannelsActiveBatch?: (streams: LiveStream[]) => void;
   markChannelInactive?: (streamId: string | number) => void;
   showAdult?: boolean;
 }) {
@@ -3491,10 +3546,22 @@ function LiveView({
       return;
     }
 
-    if (!isReal || !markChannelActive) return;
+    if (!isReal) return;
 
-    const candidates = displayedChannels.slice(0, 40);
+    // Toutes les chaînes de la catégorie (ou toutes les chaînes de l'IPTV si "Toutes les chaînes")
+    let candidates = [...displayedChannels];
     if (candidates.length === 0) return;
+
+    // Si on est dans "Toutes les chaînes", on priorise les chaînes françaises, sportives et premium en tête
+    if (selectedCategory === "all") {
+      candidates.sort((a, b) => {
+        const aName = String(a?.name || "").toLowerCase();
+        const bName = String(b?.name || "").toLowerCase();
+        const aPri = /fr\s*\||\[fr\]|\(fr\)|france|canal|bein|rmc|eurosport|tf1|m6|dazn/i.test(aName) ? 2 : 1;
+        const bPri = /fr\s*\||\[fr\]|\(fr\)|france|canal|bein|rmc|eurosport|tf1|m6|dazn/i.test(bName) ? 2 : 1;
+        return bPri - aPri;
+      });
+    }
 
     setScanning(true);
     cancelScanRef.current = false;
@@ -3503,46 +3570,64 @@ function LiveView({
     const total = candidates.length;
     setScanProgress({ tested: 0, total, found: 0 });
 
-    const concurrency = 4;
-    let index = 0;
+    const BATCH_SIZE = 50;
 
-    const worker = async () => {
-      while (index < candidates.length && !cancelScanRef.current) {
-        const stream = candidates[index++];
-        const streamId = stream?.stream_id;
-        if (!streamId) continue;
+    for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+      if (cancelScanRef.current) break;
+      const chunk = candidates.slice(i, i + BATCH_SIZE);
+      const streamIds = chunk.map((s) => s.stream_id).filter(Boolean);
 
-        try {
-          const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 3500);
-          const url = fluxaApi.streamUrl(activeProfile.id, "live", streamId, "ts");
-          const resp = await fetch(url, {
-            method: "GET",
-            headers: { Range: "bytes=0-512" },
-            signal: ctrl.signal,
-          });
-          clearTimeout(timer);
+      let verifiedChunk: LiveStream[] = [];
 
-          if (resp.ok || resp.status === 206 || resp.status === 200) {
-            markChannelActive(stream);
-            found++;
+      try {
+        // Sonde ultra-rapide côté backend (50 requêtes en parallèle avec 1.5s timeout)
+        const res = await fluxaApi.live.probeBatch(activeProfile.id, streamIds);
+        const activeIdsSet = new Set((res.active_ids || []).map(String));
+        verifiedChunk = chunk.filter((s) => activeIdsSet.has(String(s.stream_id)));
+      } catch {
+        // Fallback résilient côté client : 16 workers en parallèle avec timeout de 1.5s
+        const clientActive: LiveStream[] = [];
+        const workers = Array.from({ length: Math.min(16, chunk.length) }, async (_, wIdx) => {
+          for (let cIdx = wIdx; cIdx < chunk.length && !cancelScanRef.current; cIdx += 16) {
+            const s = chunk[cIdx];
+            if (!s?.stream_id) continue;
+            try {
+              const ctrl = new AbortController();
+              const timer = setTimeout(() => ctrl.abort(), 1500);
+              const url = fluxaApi.streamUrl(activeProfile.id, "live", s.stream_id, "ts");
+              const resp = await fetch(url, {
+                method: "GET",
+                headers: { Range: "bytes=0-100" },
+                signal: ctrl.signal,
+              });
+              clearTimeout(timer);
+              if (resp.ok || resp.status === 206 || resp.status === 200) {
+                clientActive.push(s);
+              }
+            } catch {}
           }
-        } catch {
-          // offline
-        }
-
-        tested++;
-        setScanProgress({ tested, total, found });
+        });
+        await Promise.all(workers);
+        verifiedChunk = clientActive;
       }
-    };
 
-    const pool = Array.from({ length: Math.min(concurrency, candidates.length) }, () => worker());
-    await Promise.all(pool);
+      if (verifiedChunk.length > 0) {
+        if (markChannelsActiveBatch) {
+          markChannelsActiveBatch(verifiedChunk);
+        } else if (markChannelActive) {
+          verifiedChunk.forEach(markChannelActive);
+        }
+        found += verifiedChunk.length;
+      }
+
+      tested += chunk.length;
+      setScanProgress({ tested: Math.min(tested, total), total, found });
+    }
 
     setScanning(false);
     setTimeout(() => {
       setScanProgress(null);
-    }, 4000);
+    }, 6000);
   };
 
   const selectedCatObj = visibleCategories.find((c) => c.category_id === selectedCategory);
@@ -3714,25 +3799,35 @@ function LiveView({
 
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             {/* Scan / Test button */}
-            {isReal && markChannelActive && selectedCategory !== "active" && (
+            {isReal && (markChannelActive || markChannelsActiveBatch) && (
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <button
                   type="button"
                   className={`scanner-btn ${scanning ? "scanning" : ""}`}
                   onClick={handleScanCategory}
-                  title="Tester les chaînes affichées et enregistrer automatiquement celles qui fonctionnent"
+                  title={
+                    selectedCategory === "all"
+                      ? "Tester l'intégralité des chaînes de l'abonnement IPTV et enregistrer les actives"
+                      : "Tester les chaînes affichées et enregistrer les actives"
+                  }
                 >
                   {scanning ? (
                     <>
                       <RefreshCw size={13} className="spin" />
                       <span>
-                        Scan ({scanProgress?.tested || 0}/{scanProgress?.total || 0}) · {scanProgress?.found || 0} active(s)
+                        Scan : {scanProgress ? `${scanProgress.tested.toLocaleString("fr-FR")} / ${scanProgress.total.toLocaleString("fr-FR")}` : ""} · {scanProgress?.found || 0} active(s)
                       </span>
                     </>
                   ) : (
                     <>
                       <Zap size={13} />
-                      <span>Tester & Détecter les flux</span>
+                      <span>
+                        {selectedCategory === "all"
+                          ? `Tester TOUTES les chaînes (${displayedChannels.length.toLocaleString("fr-FR")})`
+                          : selectedCategory === "active"
+                          ? `Re-tester les chaînes actives (${displayedChannels.length.toLocaleString("fr-FR")})`
+                          : `Tester cette catégorie (${displayedChannels.length.toLocaleString("fr-FR")})`}
+                      </span>
                     </>
                   )}
                 </button>

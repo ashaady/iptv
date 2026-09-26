@@ -1,7 +1,9 @@
+import asyncio
 import json
 import os
 from typing import Any, Literal
 
+import httpx
 from fastapi import APIRouter, Header, HTTPException, Query
 
 from ..config import get_settings
@@ -221,3 +223,77 @@ async def stream_segment(token: str, range_header: str | None = Header(default=N
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail="Jeton de segment invalide.") from exc
     return await proxy_url(url, range_header)
+
+
+@router.post("/live/probe-batch")
+async def probe_batch(payload: dict[str, Any]) -> dict[str, Any]:
+    profile_id = str(payload.get("profile_id", "")).strip()
+    stream_ids = payload.get("stream_ids", [])
+    if not profile_id or not stream_ids:
+        return {"active_ids": []}
+
+    try:
+        _, client = profile_client(profile_id)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="Profil IPTV introuvable.") from exc
+
+    headers = {
+        "User-Agent": "IPTVSmartersPro/1.0.0 (Linux; Android 11)",
+        "Range": "bytes=0-100",
+        "Connection": "keep-alive",
+    }
+    timeout = httpx.Timeout(connect=1.5, read=1.5, write=1.5, pool=2.0)
+    limits = httpx.Limits(max_keepalive_connections=60, max_connections=80)
+    active_ids: list[str] = []
+
+    async with httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True, verify=False) as http:
+        async def check_stream(sid: Any) -> None:
+            url = client.stream_url("live", str(sid), "ts")
+            try:
+                resp = await http.get(url, headers=headers)
+                if resp.status_code in {200, 206}:
+                    active_ids.append(str(sid))
+            except Exception:
+                pass
+
+        await asyncio.gather(*(check_stream(sid) for sid in stream_ids))
+
+    return {"active_ids": active_ids}
+
+
+@router.get("/live/active-channels")
+def get_active_channels(profile_id: str) -> list[dict[str, Any]]:
+    rows = db.fetch_all(
+        "SELECT channel_data FROM active_channels WHERE profile_id = ? ORDER BY tested_at DESC",
+        (profile_id,),
+    )
+    res = []
+    for r in rows:
+        try:
+            res.append(json.loads(r["channel_data"]))
+        except Exception:
+            pass
+    return res
+
+
+@router.post("/live/active-channels")
+def save_active_channels(payload: dict[str, Any]) -> dict[str, Any]:
+    profile_id = str(payload.get("profile_id", "")).strip()
+    channels = payload.get("channels", [])
+    if not profile_id or not channels:
+        return {"status": "ok", "saved": 0}
+    now = utc_now()
+    with db.connection() as conn:
+        for ch in channels:
+            sid = str(ch.get("stream_id", "")).strip()
+            if not sid:
+                continue
+            conn.execute(
+                """INSERT INTO active_channels(profile_id, stream_id, channel_data, tested_at)
+                   VALUES(?, ?, ?, ?)
+                   ON CONFLICT(profile_id, stream_id) DO UPDATE SET
+                   channel_data=excluded.channel_data, tested_at=excluded.tested_at""",
+                (profile_id, sid, json.dumps(ch), now),
+            )
+    return {"status": "ok", "saved": len(channels)}
+
