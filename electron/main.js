@@ -215,7 +215,16 @@ function createWindow() {
     if (url.startsWith("http:") || url.startsWith("https:")) shell.openExternal(url);
     return { action: "deny" };
   });
-  mainWindow.on("closed", () => { mainWindow = null; });
+  mainWindow.webContents.on("render-process-gone", (event, details) => {
+    console.error("[Fluxa] Processus de rendu arrêté:", details.reason);
+    if (details.reason !== "clean-exit") {
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.reload();
+        }
+      }, 500);
+    }
+  });
 
   const menu = Menu.buildFromTemplate([{
     label: "Affichage",
@@ -224,7 +233,7 @@ function createWindow() {
       { label: "Actualiser", accelerator: "CmdOrCtrl+R", click: () => mainWindow?.reload() },
       ...(app.isPackaged ? [] : [{ label: "Outils de développement", accelerator: "CmdOrCtrl+Shift+I", click: () => mainWindow?.webContents.toggleDevTools() }]),
       { type: "separator" },
-      { label: "Quitter", accelerator: "CmdOrCtrl+Q", click: () => app.quit() },
+      { label: "Quitter", click: () => app.quit() },
     ],
   }]);
   Menu.setApplicationMenu(menu);

@@ -81,6 +81,61 @@ class PlayerErrorBoundary extends Component<
   }
 }
 
+class SafeViewErrorBoundary extends Component<
+  { children: ReactNode; onReset?: () => void },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: ReactNode; onReset?: () => void }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: any) {
+    console.error("[SafeViewErrorBoundary] Erreur capturée:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "60vh",
+          padding: 32,
+          textAlign: "center",
+          color: "#94a3b8",
+          gap: 16
+        }}>
+          <Tv size={42} style={{ color: "#f4384f", opacity: 0.6 }} />
+          <div>
+            <h2 style={{ color: "#fff", fontSize: 18, marginBottom: 6 }}>Affichage temporairement indisponible</h2>
+            <p style={{ maxWidth: 440, fontSize: 13, margin: "0 auto", color: "#64748b" }}>
+              Une erreur inattendue est survenue lors de l'affichage de cette vue.
+            </p>
+          </div>
+          <button
+            className="button button-primary"
+            style={{ padding: "8px 20px", fontSize: 13, cursor: "pointer" }}
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+              this.props.onReset?.();
+            }}
+          >
+            Retourner à l'accueil
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const ADULT_KEYWORDS = [
   "xxx", "+18", "18+", "porn", "playboy", "brazzers", "dorcel",
   "hustler", "penthouse", "vivid", "redlight", "red light", "erotic", "erotik",
@@ -1319,6 +1374,7 @@ export function IptvApp() {
 
       <main className="main">
         <div className="content-container" style={{ minHeight: 0, flex: 1 }}>
+          <SafeViewErrorBoundary onReset={() => changeView("home")}>
           {view === "home" && (
             <HomeView
               activeProfile={activeProfile}
@@ -1471,6 +1527,7 @@ export function IptvApp() {
               onToggleAdult={handleToggleAdult}
             />
           )}
+          </SafeViewErrorBoundary>
         </div>
       </main>
 
@@ -3242,6 +3299,8 @@ function LiveView({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  const [displayLimit, setDisplayLimit] = useState(80);
+
   // Recherche globale de chaînes dans tout le catalogue sans entrer dans une catégorie
   useEffect(() => {
     const term = streamSearch.trim();
@@ -3253,7 +3312,7 @@ function LiveView({
 
     if (!isReal) {
       const q = term.toLowerCase();
-      const filtered = demoChannelsList.filter((s) => s.name.toLowerCase().includes(q));
+      const filtered = demoChannelsList.filter((s) => String(s?.name || "").toLowerCase().includes(q));
       setGlobalResults(filtered);
       return;
     }
@@ -3276,10 +3335,15 @@ function LiveView({
     return () => clearTimeout(timer);
   }, [streamSearch, searchScope, isReal, activeProfile, showAdult, demoChannelsList]);
 
+  // Reset pagination quand catégorie, recherche ou portée change
+  useEffect(() => {
+    setDisplayLimit(80);
+  }, [selectedCategory, streamSearch, searchScope]);
+
   const filteredCats = useMemo(() => {
     if (!catSearch.trim()) return visibleCategories;
     const q = catSearch.toLowerCase();
-    return visibleCategories.filter((c) => c.category_name.toLowerCase().includes(q));
+    return visibleCategories.filter((c) => String(c?.category_name || "").toLowerCase().includes(q));
   }, [visibleCategories, catSearch]);
 
   // Split pinned and regular categories
@@ -3306,7 +3370,7 @@ function LiveView({
     }
     if (streamSearch.trim()) {
       const q = streamSearch.toLowerCase();
-      list = list.filter((s) => s.name.toLowerCase().includes(q));
+      list = list.filter((s) => String(s?.name || "").toLowerCase().includes(q));
     }
     return list;
   }, [
@@ -3319,6 +3383,10 @@ function LiveView({
     demoChannelsList,
     realStreams,
   ]);
+
+  const visibleChannels = useMemo(() => {
+    return displayedChannels.slice(0, displayLimit);
+  }, [displayedChannels, displayLimit]);
 
   const handlePlayChannel = (stream: LiveStream) => {
     onSelectStream(stream);
@@ -3534,48 +3602,83 @@ function LiveView({
             <span>Chargement des chaînes...</span>
           </div>
         ) : displayedChannels.length > 0 ? (
-          <div className="live-grid">
-            {displayedChannels.map((stream) => {
-              const isFav = favoriteChannelIds.includes(String(stream.stream_id));
-              const catName = stream.category_id ? categoriesMap[String(stream.category_id)] : undefined;
-              return (
-                <div
-                  key={stream.stream_id}
-                  className="channel-card"
-                  onClick={() => handlePlayChannel(stream)}
-                >
-                  <button
-                    className={`favorite-button ${isFav ? "selected" : ""}`}
-                    style={{ position: "absolute", top: 10, right: 10, zIndex: 2 }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleFavoriteChannel(stream);
-                    }}
-                    title={isFav ? "Retirer des favoris" : "Ajouter aux favoris"}
+          <>
+            <div className="live-grid">
+              {visibleChannels.map((stream, idx) => {
+                const streamId = stream?.stream_id ?? `stream-${idx}`;
+                const isFav = favoriteChannelIds.includes(String(streamId));
+                const streamName = String(stream?.name || "Chaîne");
+                const catName = stream?.category_id ? categoriesMap[String(stream.category_id)] : undefined;
+                return (
+                  <div
+                    key={streamId}
+                    className="channel-card"
+                    onClick={() => handlePlayChannel(stream)}
                   >
-                    <Heart size={16} fill={isFav ? "#f4384f" : "none"} color={isFav ? "#f4384f" : "#cbd5e1"} />
-                  </button>
+                    <button
+                      className={`favorite-button ${isFav ? "selected" : ""}`}
+                      style={{ position: "absolute", top: 10, right: 10, zIndex: 2 }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleFavoriteChannel(stream);
+                      }}
+                      title={isFav ? "Retirer des favoris" : "Ajouter aux favoris"}
+                    >
+                      <Heart size={16} fill={isFav ? "#f4384f" : "none"} color={isFav ? "#f4384f" : "#cbd5e1"} />
+                    </button>
 
-                  <div className="channel-card-logo-box">
-                    {stream.stream_icon ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={stream.stream_icon} alt={stream.name} />
-                    ) : (
-                      <div style={{ height: 48, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: "#64748b" }}>
-                        {stream.name.slice(0, 3).toUpperCase()}
-                      </div>
+                    <div className="channel-card-logo-box">
+                      {stream?.stream_icon ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={stream.stream_icon} alt={streamName} />
+                      ) : (
+                        <div style={{ height: 48, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: "#64748b" }}>
+                          {streamName.slice(0, 3).toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+                    <span className="channel-card-name">{streamName}</span>
+                    {(searchScope === "global" || selectedCategory === "all") && catName && (
+                      <span className="channel-card-category-tag" title={catName}>
+                        {catName}
+                      </span>
                     )}
                   </div>
-                  <span className="channel-card-name">{stream.name}</span>
-                  {(searchScope === "global" || selectedCategory === "all") && catName && (
-                    <span className="channel-card-category-tag" title={catName}>
-                      {catName}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+
+            {displayedChannels.length > displayLimit && (
+              <div
+                style={{
+                  textAlign: "center",
+                  padding: "24px 0 40px",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <span style={{ fontSize: 12, color: "#64748b" }}>
+                  Affichage de {Math.min(displayLimit, displayedChannels.length).toLocaleString("fr-FR")} sur{" "}
+                  {displayedChannels.length.toLocaleString("fr-FR")} chaînes
+                </span>
+                <button
+                  type="button"
+                  className="btn-glass"
+                  style={{
+                    padding: "8px 24px",
+                    fontSize: 13,
+                    cursor: "pointer",
+                    borderColor: "rgba(244, 56, 79, 0.4)",
+                  }}
+                  onClick={() => setDisplayLimit((prev) => prev + 100)}
+                >
+                  Afficher 100 chaînes de plus
+                </button>
+              </div>
+            )}
+          </>
         ) : (
           <div style={{ textAlign: "center", padding: "80px 20px", color: "#64748b" }}>
             <Tv size={48} style={{ opacity: 0.4, margin: "0 auto 16px" }} />
@@ -4652,6 +4755,7 @@ function SearchView({
   onPlayMovie,
   onOpenDetail,
   onOpenSeriesDetail,
+  demoResults,
   favorites,
   toggleFavorite,
   favoriteChannelIds,
@@ -4672,9 +4776,9 @@ function SearchView({
   favoriteChannelIds: string[];
   toggleFavoriteChannel: (stream: LiveStream) => void;
 }) {
-  const liveChannels = resultsReal?.results?.live || [];
-  const movies = resultsReal?.results?.movies || [];
-  const seriesList = resultsReal?.results?.series || [];
+  const liveChannels = resultsReal?.results?.live || (activeProfile.isDemo ? (demoResults?.filter((r) => r.duration === "Direct") || []) : []);
+  const movies = resultsReal?.results?.movies || (activeProfile.isDemo ? (demoResults?.filter((r) => r.type === "film" && r.duration !== "Direct") || []) : []);
+  const seriesList = resultsReal?.results?.series || (activeProfile.isDemo ? (demoResults?.filter((r) => r.type === "série") || []) : []);
   const liveCount = liveChannels.length;
   const movieCount = movies.length;
   const seriesCount = seriesList.length;
@@ -4697,6 +4801,7 @@ function SearchView({
           <button
             onClick={() => setQuery("")}
             style={{ background: "transparent", border: "none", color: "#64748b", cursor: "pointer" }}
+            title="Effacer"
           >
             <X size={16} />
           </button>
@@ -4706,7 +4811,32 @@ function SearchView({
       {searching && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, color: "#94a3b8", padding: 40 }}>
           <RefreshCw className="spin" size={20} />
-          <span>Recherche en cours...</span>
+          <span>Recherche en cours dans tout le catalogue...</span>
+        </div>
+      )}
+
+      {!searching && !query.trim() && (
+        <div style={{ textAlign: "center", padding: "60px 20px", color: "#64748b" }}>
+          <Search size={44} style={{ opacity: 0.35, color: "#f4384f", margin: "0 auto 16px" }} />
+          <h2 style={{ color: "#fff", fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
+            Recherche globale dans tout le catalogue
+          </h2>
+          <p style={{ fontSize: 13, maxWidth: 500, margin: "0 auto 24px", color: "#94a3b8" }}>
+            Recherchez instantanément parmi l'intégralité des chaînes TV en direct, films et séries disponibles.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", maxWidth: 600, margin: "0 auto" }}>
+            {["TF1", "Canal+", "BeIN Sports", "RMC", "Action", "Comédie", "Avatar"].map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                className="btn-glass"
+                style={{ fontSize: 12, padding: "6px 14px", cursor: "pointer" }}
+                onClick={() => setQuery(tag)}
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -4727,11 +4857,13 @@ function SearchView({
                 <div className="nyx-section-title">Chaînes TV ({liveCount})</div>
               </div>
               <div className="nyx-scroll-row">
-                {liveChannels.slice(0, 20).map((stream) => {
-                  const isFav = favoriteChannelIds.includes(String(stream.stream_id));
+                {liveChannels.slice(0, 40).map((stream, idx) => {
+                  const streamId = stream?.stream_id ?? `search-stream-${idx}`;
+                  const streamName = String(stream?.name || "Chaîne");
+                  const isFav = favoriteChannelIds.includes(String(streamId));
                   return (
                     <div
-                      key={stream.stream_id}
+                      key={streamId}
                       className="channel-card"
                       style={{ flex: "0 0 160px", aspectRatio: "1.3 / 1" }}
                       onClick={() => onSelectStream(stream)}
@@ -4743,20 +4875,21 @@ function SearchView({
                           e.stopPropagation();
                           toggleFavoriteChannel(stream);
                         }}
+                        title={isFav ? "Retirer des favoris" : "Ajouter aux favoris"}
                       >
                         <Heart size={15} fill={isFav ? "#f4384f" : "none"} color={isFav ? "#f4384f" : "#cbd5e1"} />
                       </button>
                       <div className="channel-card-logo-box">
-                        {stream.stream_icon ? (
+                        {stream?.stream_icon ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={stream.stream_icon} alt={stream.name} />
+                          <img src={stream.stream_icon} alt={streamName} />
                         ) : (
                           <div style={{ height: 44, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700, color: "#64748b" }}>
-                            {stream.name.slice(0, 3)}
+                            {streamName.slice(0, 3).toUpperCase()}
                           </div>
                         )}
                       </div>
-                      <span className="channel-card-name">{stream.name}</span>
+                      <span className="channel-card-name">{streamName}</span>
                     </div>
                   );
                 })}
@@ -4771,21 +4904,25 @@ function SearchView({
                 <div className="nyx-section-title">Films ({movieCount})</div>
               </div>
               <div className="nyx-scroll-row">
-                {movies.slice(0, 25).map((movie) => (
-                  <div
-                    key={movie.stream_id}
-                    className="nyx-card"
-                    onClick={() => {
-                      if (onOpenDetail) onOpenDetail(movie);
-                      else onPlayMovie(movie);
-                    }}
-                  >
-                    <span className="nyx-card-rating">★ {movie.rating_5based || "7.5"}</span>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={movie.stream_icon || "/assets/avatar_card.jpg"} alt={movie.name} />
-                    <div className="nyx-card-title-overlay">{movie.name}</div>
-                  </div>
-                ))}
+                {movies.slice(0, 40).map((movie, idx) => {
+                  const movieId = movie?.stream_id ?? `search-movie-${idx}`;
+                  const movieName = String(movie?.name || movie?.title || "Film");
+                  return (
+                    <div
+                      key={movieId}
+                      className="nyx-card"
+                      onClick={() => {
+                        if (onOpenDetail) onOpenDetail(movie);
+                        else onPlayMovie(movie);
+                      }}
+                    >
+                      <span className="nyx-card-rating">★ {movie?.rating_5based || "7.5"}</span>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={movie?.stream_icon || movie?.poster || "/assets/avatar_card.jpg"} alt={movieName} />
+                      <div className="nyx-card-title-overlay">{movieName}</div>
+                    </div>
+                  );
+                })}
               </div>
             </section>
           )}
@@ -4797,21 +4934,25 @@ function SearchView({
                 <div className="nyx-section-title">Séries ({seriesCount})</div>
               </div>
               <div className="nyx-scroll-row">
-                {seriesList.slice(0, 25).map((ser) => (
-                  <div
-                    key={ser.series_id}
-                    className="nyx-card"
-                    onClick={() => {
-                      if (onOpenDetail) onOpenDetail({ ...ser, kind: "series" });
-                      else onOpenSeriesDetail?.(ser);
-                    }}
-                  >
-                    <span className="nyx-card-rating">★ {ser.rating || "8.0"}</span>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={ser.cover || "/assets/avatar_card.jpg"} alt={ser.name} />
-                    <div className="nyx-card-title-overlay">{ser.name}</div>
-                  </div>
-                ))}
+                {seriesList.slice(0, 40).map((ser, idx) => {
+                  const serId = ser?.series_id ?? `search-ser-${idx}`;
+                  const serName = String(ser?.name || ser?.title || "Série");
+                  return (
+                    <div
+                      key={serId}
+                      className="nyx-card"
+                      onClick={() => {
+                        if (onOpenDetail) onOpenDetail({ ...ser, kind: "series" });
+                        else onOpenSeriesDetail?.(ser);
+                      }}
+                    >
+                      <span className="nyx-card-rating">★ {ser?.rating || "8.0"}</span>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={ser?.cover || ser?.poster || "/assets/avatar_card.jpg"} alt={serName} />
+                      <div className="nyx-card-title-overlay">{serName}</div>
+                    </div>
+                  );
+                })}
               </div>
             </section>
           )}
