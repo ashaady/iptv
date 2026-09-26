@@ -3175,6 +3175,10 @@ function LiveView({
   const isReal = !activeProfile.isDemo;
   const [catSearch, setCatSearch] = useState("");
   const [streamSearch, setStreamSearch] = useState("");
+  const [searchScope, setSearchScope] = useState<"global" | "category">("global");
+  const [globalResults, setGlobalResults] = useState<LiveStream[]>([]);
+  const [searchingGlobal, setSearchingGlobal] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Demo categories matching Screenshot 4
   const demoCategoriesList: LiveCategory[] = useMemo(() => [
@@ -3203,6 +3207,7 @@ function LiveView({
     { stream_id: 107, name: "FR| ARTE", stream_type: "live", stream_icon: "/assets/arte.png", category_id: "cat_4" },
     { stream_id: 108, name: "FR| FRANCE 3", stream_type: "live", stream_icon: "/assets/france3.png", category_id: "cat_4" },
   ], []);
+
   const visibleCategories = useMemo(() => {
     if (!isReal) return demoCategoriesList;
     if (showAdult) return realCategories;
@@ -3210,6 +3215,66 @@ function LiveView({
       (c) => c.category_id !== "16" && !/adult|xxx|\+18|18\+|porn/i.test(c.category_name)
     );
   }, [isReal, showAdult, realCategories, demoCategoriesList]);
+
+  // Map category_id -> category_name
+  const categoriesMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    visibleCategories.forEach((c) => {
+      map[String(c.category_id)] = c.category_name;
+    });
+    return map;
+  }, [visibleCategories]);
+
+  // Raccourci clavier '/' ou 'Ctrl+F' pour chercher directement sans quitter le clavier
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const tag = document.activeElement?.tagName;
+      if (
+        (e.key === "/" && tag !== "INPUT" && tag !== "TEXTAREA") ||
+        ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f")
+      ) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Recherche globale de chaînes dans tout le catalogue sans entrer dans une catégorie
+  useEffect(() => {
+    const term = streamSearch.trim();
+    if (searchScope !== "global" || term.length < 2) {
+      setGlobalResults([]);
+      setSearchingGlobal(false);
+      return;
+    }
+
+    if (!isReal) {
+      const q = term.toLowerCase();
+      const filtered = demoChannelsList.filter((s) => s.name.toLowerCase().includes(q));
+      setGlobalResults(filtered);
+      return;
+    }
+
+    setSearchingGlobal(true);
+    const timer = setTimeout(() => {
+      fluxaApi
+        .search(activeProfile.id, term, "live", showAdult)
+        .then((res) => {
+          setGlobalResults(res.results?.live || []);
+        })
+        .catch((err) => {
+          console.error("Erreur recherche globale:", err);
+        })
+        .finally(() => {
+          setSearchingGlobal(false);
+        });
+    }, 200);
+
+    return () => clearTimeout(timer);
+  }, [streamSearch, searchScope, isReal, activeProfile, showAdult, demoChannelsList]);
 
   const filteredCats = useMemo(() => {
     if (!catSearch.trim()) return visibleCategories;
@@ -3228,9 +3293,12 @@ function LiveView({
 
   // Channels to display in the right panel
   const displayedChannels = useMemo(() => {
+    if (searchScope === "global" && streamSearch.trim().length >= 2) {
+      return globalResults;
+    }
     let list: LiveStream[] = [];
     if (!isReal) {
-      list = demoChannelsList;
+      list = selectedCategory === "favorites" ? favoriteChannelsList : demoChannelsList;
     } else if (selectedCategory === "favorites") {
       list = favoriteChannelsList;
     } else {
@@ -3241,7 +3309,16 @@ function LiveView({
       list = list.filter((s) => s.name.toLowerCase().includes(q));
     }
     return list;
-  }, [isReal, demoChannelsList, selectedCategory, favoriteChannelsList, realStreams, streamSearch]);
+  }, [
+    searchScope,
+    streamSearch,
+    globalResults,
+    isReal,
+    selectedCategory,
+    favoriteChannelsList,
+    demoChannelsList,
+    realStreams,
+  ]);
 
   const handlePlayChannel = (stream: LiveStream) => {
     onSelectStream(stream);
@@ -3262,6 +3339,8 @@ function LiveView({
   const selectedCatObj = visibleCategories.find((c) => c.category_id === selectedCategory);
   const currentCategoryTitle = selectedCategory === "favorites"
     ? "Chaînes favorites"
+    : selectedCategory === "all"
+    ? "Toutes les chaînes"
     : selectedCatObj?.category_name || "Toutes les chaînes";
 
   return (
@@ -3293,6 +3372,21 @@ function LiveView({
         </div>
 
         <div className="live-cat-list">
+          {/* Toutes les chaînes Tab */}
+          <div
+            className={`live-cat-item ${selectedCategory === "all" ? "active" : ""}`}
+            onClick={() => {
+              onSelectCategory("all");
+              setSearchScope("global");
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Tv size={14} color={selectedCategory === "all" ? "#f4384f" : "currentColor"} />
+              <span className="live-cat-name">Toutes les chaînes</span>
+            </div>
+            <span className="live-cat-badge">Global</span>
+          </div>
+
           {/* Favorites Tab */}
           <div
             className={`live-cat-item ${selectedCategory === "favorites" ? "active" : ""}`}
@@ -3370,26 +3464,67 @@ function LiveView({
       <main className="live-channels-pane">
         <div className="live-pane-header">
           <div>
-            <h1 className="live-pane-title">{currentCategoryTitle}</h1>
-            <span className="live-pane-count">{displayedChannels.length} chaîne(s) disponible(s)</span>
+            <h1 className="live-pane-title">
+              {streamSearch.trim().length >= 2 && searchScope === "global"
+                ? `Résultats pour "${streamSearch}"`
+                : currentCategoryTitle}
+            </h1>
+            <span className="live-pane-count">
+              {displayedChannels.length} chaîne(s){" "}
+              {searchScope === "global" && streamSearch.trim().length >= 2
+                ? "trouvée(s) dans tout le catalogue"
+                : "disponible(s)"}
+            </span>
           </div>
-          <div style={{ marginLeft: "auto", width: 260 }}>
-            <input
-              type="text"
-              className="search-pill-input"
-              style={{
-                width: "100%",
-                height: 38,
-                borderRadius: 999,
-                background: "rgba(255,255,255,0.06)",
-                padding: "0 16px",
-                border: "1px solid rgba(255,255,255,0.12)",
-                fontSize: 13,
-              }}
-              placeholder="Filtrer les chaînes..."
-              value={streamSearch}
-              onChange={(e) => setStreamSearch(e.target.value)}
-            />
+
+          <div className="live-search-wrapper">
+            <div className="live-search-scope-pills">
+              <button
+                type="button"
+                className={`scope-pill ${searchScope === "global" ? "active" : ""}`}
+                onClick={() => setSearchScope("global")}
+                title="Rechercher dans toutes les chaînes sans restriction de catégorie"
+              >
+                Tout le catalogue
+              </button>
+              <button
+                type="button"
+                className={`scope-pill ${searchScope === "category" ? "active" : ""}`}
+                onClick={() => setSearchScope("category")}
+                title="Rechercher uniquement dans la catégorie sélectionnée"
+              >
+                Catégorie active
+              </button>
+            </div>
+
+            <div className="live-search-input-box">
+              <Search size={14} className="search-icon" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                className="live-search-field"
+                placeholder={
+                  searchScope === "global"
+                    ? "Taper une chaîne (ex: TF1, Canal, BeIN)... [/]"
+                    : "Filtrer dans cette catégorie..."
+                }
+                value={streamSearch}
+                onChange={(e) => setStreamSearch(e.target.value)}
+              />
+              {searchingGlobal && (
+                <RefreshCw size={13} className="spin search-spinner" />
+              )}
+              {streamSearch && (
+                <button
+                  type="button"
+                  className="search-clear-btn"
+                  onClick={() => setStreamSearch("")}
+                  title="Effacer la recherche"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -3402,6 +3537,7 @@ function LiveView({
           <div className="live-grid">
             {displayedChannels.map((stream) => {
               const isFav = favoriteChannelIds.includes(String(stream.stream_id));
+              const catName = stream.category_id ? categoriesMap[String(stream.category_id)] : undefined;
               return (
                 <div
                   key={stream.stream_id}
@@ -3431,6 +3567,11 @@ function LiveView({
                     )}
                   </div>
                   <span className="channel-card-name">{stream.name}</span>
+                  {(searchScope === "global" || selectedCategory === "all") && catName && (
+                    <span className="channel-card-category-tag" title={catName}>
+                      {catName}
+                    </span>
+                  )}
                 </div>
               );
             })}
@@ -3438,8 +3579,24 @@ function LiveView({
         ) : (
           <div style={{ textAlign: "center", padding: "80px 20px", color: "#64748b" }}>
             <Tv size={48} style={{ opacity: 0.4, margin: "0 auto 16px" }} />
-            <h3 style={{ color: "#fff", fontSize: 16, marginBottom: 6 }}>Aucune chaîne trouvée</h3>
-            <p style={{ fontSize: 13 }}>Essayez une autre recherche ou sélectionnez une catégorie différente.</p>
+            <h3 style={{ color: "#fff", fontSize: 16, marginBottom: 6 }}>
+              {streamSearch.trim() ? `Aucune chaîne correspondant à "${streamSearch}"` : "Aucune chaîne trouvée"}
+            </h3>
+            <p style={{ fontSize: 13 }}>
+              {streamSearch.trim().length === 1 && searchScope === "global"
+                ? "Tapez au moins 2 caractères pour rechercher dans tout le catalogue."
+                : "Essayez une autre recherche ou sélectionnez une catégorie différente."}
+            </p>
+            {streamSearch && (
+              <button
+                type="button"
+                className="btn-glass"
+                style={{ marginTop: 14, fontSize: 12, padding: "6px 14px", cursor: "pointer" }}
+                onClick={() => setStreamSearch("")}
+              >
+                Réinitialiser la recherche
+              </button>
+            )}
           </div>
         )}
       </main>
