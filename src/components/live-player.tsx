@@ -43,6 +43,8 @@ interface LivePlayerProps {
   onExitTimeshift?: () => void;
   onOpenTimeshiftMenu?: () => void;
   hasTimeshiftArchive?: boolean;
+  onPlaybackSuccess?: () => void;
+  onPlaybackError?: () => void;
 }
 
 function formatDelay(delay: number): string {
@@ -69,6 +71,8 @@ export function LivePlayer({
   onExitTimeshift,
   onOpenTimeshiftMenu,
   hasTimeshiftArchive = true,
+  onPlaybackSuccess,
+  onPlaybackError,
 }: LivePlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -395,6 +399,7 @@ export function LivePlayer({
       lastPlaybackTime = video.currentTime;
       lastProgressAt = Date.now();
       window.desktopApi?.setKeepAwake(true);
+      onPlaybackSuccess?.();
     };
     const onWaiting = () => {
       setLoading(true);
@@ -426,6 +431,7 @@ export function LivePlayer({
           setUseTranscode(true);
           return;
         }
+        onPlaybackError?.();
         if (mediaErr.code === 3 || mediaErr.code === 4) {
           setError("Format vidéo/audio non décodable par le lecteur interne. Cliquez sur « Lire dans VLC » ci-dessous.");
         } else if (mediaErr.code === 2) {

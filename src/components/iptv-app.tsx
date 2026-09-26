@@ -547,6 +547,49 @@ export function IptvApp() {
   const favoriteChannelIds = useMemo(() => Object.keys(favoriteChannelsMap), [favoriteChannelsMap]);
   const favoriteChannelsList = useMemo(() => Object.values(favoriteChannelsMap), [favoriteChannelsMap]);
 
+  // Gestion des chaînes actives fonctionnelles vérifiées (qui fonctionnent à 100%)
+  const [activeChannelsMap, setActiveChannelsMap] = useState<Record<string, LiveStream>>({});
+  const activeChannelIds = useMemo(() => Object.keys(activeChannelsMap), [activeChannelsMap]);
+  const activeChannelsList = useMemo(() => Object.values(activeChannelsMap), [activeChannelsMap]);
+
+  // Chargement des chaînes actives depuis localStorage
+  useEffect(() => {
+    if (!activeProfile?.id) return;
+    try {
+      const saved = window.localStorage.getItem(`fluxa_active_channels_${activeProfile.id}`);
+      if (saved) {
+        setActiveChannelsMap(JSON.parse(saved));
+      }
+    } catch {}
+  }, [activeProfile?.id]);
+
+  const markChannelActive = useCallback((stream: LiveStream) => {
+    if (!activeProfile?.id || !stream?.stream_id) return;
+    setActiveChannelsMap((prev) => {
+      const idStr = String(stream.stream_id);
+      if (prev[idStr]) return prev;
+      const next = { ...prev, [idStr]: stream };
+      try {
+        window.localStorage.setItem(`fluxa_active_channels_${activeProfile.id}`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, [activeProfile?.id]);
+
+  const markChannelInactive = useCallback((streamId: string | number) => {
+    if (!activeProfile?.id || !streamId) return;
+    setActiveChannelsMap((prev) => {
+      const idStr = String(streamId);
+      if (!prev[idStr]) return prev;
+      const next = { ...prev };
+      delete next[idStr];
+      try {
+        window.localStorage.setItem(`fluxa_active_channels_${activeProfile.id}`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, [activeProfile?.id]);
+
   useEffect(() => {
     let cancelled = false;
     setIsDesktop(Boolean(typeof window !== "undefined" && window.desktopApi?.isDesktop));
@@ -1409,6 +1452,8 @@ export function IptvApp() {
                   ? []
                   : selectedLiveCat === "favorites"
                   ? displayedFavoriteChannels
+                  : selectedLiveCat === "active"
+                  ? activeChannelsList
                   : displayedLiveStreams
               }
               selectedStream={selectedStream}
@@ -1416,7 +1461,7 @@ export function IptvApp() {
               onStartCinema={(state) => setCinemaPlayerState(state)}
               pinnedCategoryIds={pinnedCategoryIds}
               onTogglePinCategory={handleTogglePinCategory}
-              loading={selectedLiveCat === "favorites" ? false : loadingStreams}
+              loading={selectedLiveCat === "favorites" || selectedLiveCat === "active" ? false : loadingStreams}
               demoCategory={category}
               setDemoCategory={setCategory}
               demoChannels={filteredChannels}
@@ -1429,6 +1474,10 @@ export function IptvApp() {
               favoriteChannelIds={favoriteChannelIds}
               favoriteChannelsList={displayedFavoriteChannels}
               toggleFavoriteChannel={toggleFavoriteChannel}
+              activeChannelIds={activeChannelIds}
+              activeChannelsList={activeChannelsList}
+              markChannelActive={markChannelActive}
+              markChannelInactive={markChannelInactive}
               showAdult={showAdult}
             />
           )}
@@ -1688,6 +1737,16 @@ export function IptvApp() {
           onClose={() => setCinemaPlayerState(null)}
           activeProfile={activeProfile}
           allChannels={displayedLiveStreams}
+          onPlaybackSuccess={() => {
+            if (cinemaPlayerState.channel) {
+              markChannelActive(cinemaPlayerState.channel);
+            }
+          }}
+          onPlaybackError={() => {
+            if (cinemaPlayerState.streamId) {
+              markChannelInactive(cinemaPlayerState.streamId);
+            }
+          }}
           onSelectChannel={(ch) => {
             const url = activeProfile.isDemo
               ? "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
@@ -1950,6 +2009,8 @@ function CinemaPlayerModal({
   onSelectEpisode,
   favoriteChannelIds = [],
   toggleFavoriteChannel,
+  onPlaybackSuccess,
+  onPlaybackError,
 }: {
   playerState: {
     type: "live" | "movie" | "series";
@@ -1970,6 +2031,8 @@ function CinemaPlayerModal({
   onSelectEpisode?: (series: SeriesItem, episode: any, seasonNum: string | number) => void;
   favoriteChannelIds?: string[];
   toggleFavoriteChannel?: (stream: LiveStream) => void;
+  onPlaybackSuccess?: () => void;
+  onPlaybackError?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(true);
@@ -2088,6 +2151,8 @@ function CinemaPlayerModal({
             channelName={playerState.title}
             streamId={playerState.streamId || 0}
             hasTimeshiftArchive={true}
+            onPlaybackSuccess={onPlaybackSuccess}
+            onPlaybackError={onPlaybackError}
           />
         ) : (
           <video
@@ -3202,6 +3267,10 @@ function LiveView({
   favoriteChannelIds,
   favoriteChannelsList,
   toggleFavoriteChannel,
+  activeChannelIds = [],
+  activeChannelsList = [],
+  markChannelActive,
+  markChannelInactive,
   showAdult = true,
 }: {
   activeProfile: ActiveProfile;
@@ -3227,6 +3296,10 @@ function LiveView({
   favoriteChannelIds: string[];
   favoriteChannelsList: LiveStream[];
   toggleFavoriteChannel: (stream: LiveStream) => void;
+  activeChannelIds?: string[];
+  activeChannelsList?: LiveStream[];
+  markChannelActive?: (stream: LiveStream) => void;
+  markChannelInactive?: (streamId: string | number) => void;
   showAdult?: boolean;
 }) {
   const isReal = !activeProfile.isDemo;
@@ -3362,9 +3435,11 @@ function LiveView({
     }
     let list: LiveStream[] = [];
     if (!isReal) {
-      list = selectedCategory === "favorites" ? favoriteChannelsList : demoChannelsList;
+      list = selectedCategory === "favorites" ? favoriteChannelsList : selectedCategory === "active" ? activeChannelsList : demoChannelsList;
     } else if (selectedCategory === "favorites") {
       list = favoriteChannelsList;
+    } else if (selectedCategory === "active") {
+      list = activeChannelsList;
     } else {
       list = realStreams;
     }
@@ -3380,6 +3455,7 @@ function LiveView({
     isReal,
     selectedCategory,
     favoriteChannelsList,
+    activeChannelsList,
     demoChannelsList,
     realStreams,
   ]);
@@ -3404,9 +3480,76 @@ function LiveView({
     }
   };
 
+  const [scanning, setScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState<{ tested: number; total: number; found: number } | null>(null);
+  const cancelScanRef = useRef(false);
+
+  const handleScanCategory = async () => {
+    if (scanning) {
+      cancelScanRef.current = true;
+      setScanning(false);
+      return;
+    }
+
+    if (!isReal || !markChannelActive) return;
+
+    const candidates = displayedChannels.slice(0, 40);
+    if (candidates.length === 0) return;
+
+    setScanning(true);
+    cancelScanRef.current = false;
+    let tested = 0;
+    let found = 0;
+    const total = candidates.length;
+    setScanProgress({ tested: 0, total, found: 0 });
+
+    const concurrency = 4;
+    let index = 0;
+
+    const worker = async () => {
+      while (index < candidates.length && !cancelScanRef.current) {
+        const stream = candidates[index++];
+        const streamId = stream?.stream_id;
+        if (!streamId) continue;
+
+        try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 3500);
+          const url = fluxaApi.streamUrl(activeProfile.id, "live", streamId, "ts");
+          const resp = await fetch(url, {
+            method: "GET",
+            headers: { Range: "bytes=0-512" },
+            signal: ctrl.signal,
+          });
+          clearTimeout(timer);
+
+          if (resp.ok || resp.status === 206 || resp.status === 200) {
+            markChannelActive(stream);
+            found++;
+          }
+        } catch {
+          // offline
+        }
+
+        tested++;
+        setScanProgress({ tested, total, found });
+      }
+    };
+
+    const pool = Array.from({ length: Math.min(concurrency, candidates.length) }, () => worker());
+    await Promise.all(pool);
+
+    setScanning(false);
+    setTimeout(() => {
+      setScanProgress(null);
+    }, 4000);
+  };
+
   const selectedCatObj = visibleCategories.find((c) => c.category_id === selectedCategory);
   const currentCategoryTitle = selectedCategory === "favorites"
     ? "Chaînes favorites"
+    : selectedCategory === "active"
+    ? "Chaînes Actives & Vérifiées"
     : selectedCategory === "all"
     ? "Toutes les chaînes"
     : selectedCatObj?.category_name || "Toutes les chaînes";
@@ -3465,6 +3608,30 @@ function LiveView({
               <span className="live-cat-name">Favoris</span>
             </div>
             <span className="live-cat-badge">{favoriteChannelsList.length}</span>
+          </div>
+
+          {/* Active Channels Tab */}
+          <div
+            className={`live-cat-item ${selectedCategory === "active" ? "active" : ""}`}
+            onClick={() => onSelectCategory("active")}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Zap size={14} color="#10b981" fill={selectedCategory === "active" ? "#10b981" : "none"} />
+              <span className="live-cat-name" style={{ color: selectedCategory === "active" ? "#34d399" : undefined }}>
+                Chaînes Actives
+              </span>
+            </div>
+            <span
+              className="live-cat-badge"
+              style={{
+                background: "rgba(16, 185, 129, 0.18)",
+                color: "#34d399",
+                fontWeight: 700,
+                border: "1px solid rgba(16, 185, 129, 0.3)",
+              }}
+            >
+              {activeChannelIds.length}
+            </span>
           </div>
 
           {/* Pinned Categories */}
@@ -3545,53 +3712,91 @@ function LiveView({
             </span>
           </div>
 
-          <div className="live-search-wrapper">
-            <div className="live-search-scope-pills">
-              <button
-                type="button"
-                className={`scope-pill ${searchScope === "global" ? "active" : ""}`}
-                onClick={() => setSearchScope("global")}
-                title="Rechercher dans toutes les chaînes sans restriction de catégorie"
-              >
-                Tout le catalogue
-              </button>
-              <button
-                type="button"
-                className={`scope-pill ${searchScope === "category" ? "active" : ""}`}
-                onClick={() => setSearchScope("category")}
-                title="Rechercher uniquement dans la catégorie sélectionnée"
-              >
-                Catégorie active
-              </button>
-            </div>
-
-            <div className="live-search-input-box">
-              <Search size={14} className="search-icon" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                className="live-search-field"
-                placeholder={
-                  searchScope === "global"
-                    ? "Taper une chaîne (ex: TF1, Canal, BeIN)... [/]"
-                    : "Filtrer dans cette catégorie..."
-                }
-                value={streamSearch}
-                onChange={(e) => setStreamSearch(e.target.value)}
-              />
-              {searchingGlobal && (
-                <RefreshCw size={13} className="spin search-spinner" />
-              )}
-              {streamSearch && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {/* Scan / Test button */}
+            {isReal && markChannelActive && selectedCategory !== "active" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <button
                   type="button"
-                  className="search-clear-btn"
-                  onClick={() => setStreamSearch("")}
-                  title="Effacer la recherche"
+                  className={`scanner-btn ${scanning ? "scanning" : ""}`}
+                  onClick={handleScanCategory}
+                  title="Tester les chaînes affichées et enregistrer automatiquement celles qui fonctionnent"
                 >
-                  <X size={13} />
+                  {scanning ? (
+                    <>
+                      <RefreshCw size={13} className="spin" />
+                      <span>
+                        Scan ({scanProgress?.tested || 0}/{scanProgress?.total || 0}) · {scanProgress?.found || 0} active(s)
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={13} />
+                      <span>Tester & Détecter les flux</span>
+                    </>
+                  )}
                 </button>
-              )}
+                {scanning && (
+                  <button
+                    type="button"
+                    className="btn-glass"
+                    style={{ padding: "6px 12px", fontSize: 11, color: "#f87171", borderColor: "rgba(239, 68, 68, 0.3)" }}
+                    onClick={() => { cancelScanRef.current = true; }}
+                  >
+                    Arrêter
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="live-search-wrapper">
+              <div className="live-search-scope-pills">
+                <button
+                  type="button"
+                  className={`scope-pill ${searchScope === "global" ? "active" : ""}`}
+                  onClick={() => setSearchScope("global")}
+                  title="Rechercher dans toutes les chaînes sans restriction de catégorie"
+                >
+                  Tout le catalogue
+                </button>
+                <button
+                  type="button"
+                  className={`scope-pill ${searchScope === "category" ? "active" : ""}`}
+                  onClick={() => setSearchScope("category")}
+                  title="Rechercher uniquement dans la catégorie sélectionnée"
+                >
+                  Catégorie active
+                </button>
+              </div>
+
+              <div className="live-search-input-box">
+                <Search size={14} className="search-icon" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  className="live-search-field"
+                  placeholder={
+                    searchScope === "global"
+                      ? "Taper une chaîne (ex: TF1, Canal, BeIN)... [/]"
+                      : "Filtrer dans cette catégorie..."
+                  }
+                  value={streamSearch}
+                  onChange={(e) => setStreamSearch(e.target.value)}
+                />
+                {searchingGlobal && (
+                  <RefreshCw size={13} className="spin search-spinner" />
+                )}
+                {streamSearch && (
+                  <button
+                    type="button"
+                    className="search-clear-btn"
+                    onClick={() => setStreamSearch("")}
+                    title="Effacer la recherche"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -3607,6 +3812,7 @@ function LiveView({
               {visibleChannels.map((stream, idx) => {
                 const streamId = stream?.stream_id ?? `stream-${idx}`;
                 const isFav = favoriteChannelIds.includes(String(streamId));
+                const isActive = activeChannelIds.includes(String(streamId));
                 const streamName = String(stream?.name || "Chaîne");
                 const catName = stream?.category_id ? categoriesMap[String(stream.category_id)] : undefined;
                 return (
@@ -3615,6 +3821,11 @@ function LiveView({
                     className="channel-card"
                     onClick={() => handlePlayChannel(stream)}
                   >
+                    {isActive && (
+                      <span className="channel-online-tag" title="Flux vérifié et opérationnel">
+                        <span className="channel-online-dot" /> En ligne
+                      </span>
+                    )}
                     <button
                       className={`favorite-button ${isFav ? "selected" : ""}`}
                       style={{ position: "absolute", top: 10, right: 10, zIndex: 2 }}
