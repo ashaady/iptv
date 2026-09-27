@@ -270,6 +270,28 @@ export function LivePlayer({
     setError(null);
     setLoading(true);
 
+    // Intercepter les erreurs internes de mpegts (ex: ec-3 / addSourceBuffer unsupported)
+    // pour éviter que Next.js Turbopack en mode dev n'affiche une fenêtre modale bloquante
+    const origConsoleError = console.error;
+    console.error = (...args: any[]) => {
+      const msg = args.map((a) => (typeof a === "object" ? (a?.message || JSON.stringify(a)) : String(a))).join(" ");
+      if (
+        msg.includes("addSourceBuffer") ||
+        msg.includes("MSEController") ||
+        msg.includes("ec-3") ||
+        msg.includes("ac-3") ||
+        msg.includes("unsupported")
+      ) {
+        console.warn("[LivePlayer MSE Codec Intercepted]:", ...args);
+        if (!useTranscode) {
+          console.warn("[LivePlayer] Codec audio incompatible détecté (ec-3). Bascule sur flux transcodé AAC...");
+          setUseTranscode(true);
+        }
+        return;
+      }
+      origConsoleError.apply(console, args);
+    };
+
     let isCancelled = false;
     let player: mpegts.Player | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -332,6 +354,18 @@ export function LivePlayer({
           return;
         }
 
+        // Désactiver les logs d'erreur bruyants de mpegts dans la console
+        try {
+          mpegtsModule.LoggingControl.applyConfig({
+            enableAll: false,
+            enableDebug: false,
+            enableVerbose: false,
+            enableInfo: false,
+            enableWarn: false,
+            enableError: false,
+          });
+        } catch {}
+
         const features = mpegtsModule.getFeatureList();
         const canPlayMse = features && features.mseLivePlayback && mpegtsModule.isSupported();
 
@@ -344,7 +378,7 @@ export function LivePlayer({
               cors: true,
             },
             {
-              enableWorker: true,
+              enableWorker: false,
               lazyLoad: false,
               // Ne jamais déplacer automatiquement la tête de lecture :
               // l'utilisateur revient au direct avec le bouton dédié.
@@ -495,6 +529,7 @@ export function LivePlayer({
     video.addEventListener("error", onVideoError);
 
     return () => {
+      console.error = origConsoleError;
       isCancelled = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (stallTimer) clearInterval(stallTimer);
@@ -514,7 +549,7 @@ export function LivePlayer({
           player.detachMediaElement();
           player.destroy();
         } catch (e) {
-          console.error("Erreur destruction player:", e);
+          console.warn("Erreur destruction player:", e);
         }
         playerRef.current = null;
       }
