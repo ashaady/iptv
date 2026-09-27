@@ -542,6 +542,22 @@ export function IptvApp() {
     return initialHistoryItems;
   });
 
+  useEffect(() => {
+    if (!playingMovie) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" || e.key === "Backspace") {
+        const activeTag = document.activeElement?.tagName.toLowerCase();
+        if (e.key === "Backspace" && (activeTag === "input" || activeTag === "textarea")) {
+          return;
+        }
+        e.preventDefault();
+        setPlayingMovie(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [playingMovie]);
+
   // Gestion des chaînes favorites complètes (avec logos et métadonnées)
   const [favoriteChannelsMap, setFavoriteChannelsMap] = useState<Record<string, LiveStream>>({});
   const favoriteChannelIds = useMemo(() => Object.keys(favoriteChannelsMap), [favoriteChannelsMap]);
@@ -1696,6 +1712,17 @@ export function IptvApp() {
                   </button>
                 )}
                 <button
+                  type="button"
+                  className="button button-ghost compact"
+                  onClick={() => setPlayingMovie(null)}
+                  aria-label="Retour (Échap)"
+                  title="Retour (Échap)"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, padding: "5px 12px" }}
+                >
+                  <ArrowLeft size={15} />
+                  <span>Retour</span>
+                </button>
+                <button
                   className="modal-video-close"
                   onClick={() => setPlayingMovie(null)}
                   aria-label="Fermer (Échap)"
@@ -2114,6 +2141,21 @@ function CinemaPlayerModal({
     };
   }, []);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" || e.key === "Backspace") {
+        const activeTag = document.activeElement?.tagName.toLowerCase();
+        if (e.key === "Backspace" && (activeTag === "input" || activeTag === "textarea")) {
+          return;
+        }
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   const togglePlay = () => {
     if (!videoRef.current) return;
     if (videoRef.current.paused) {
@@ -2206,6 +2248,7 @@ function CinemaPlayerModal({
             hasTimeshiftArchive={true}
             onPlaybackSuccess={onPlaybackSuccess}
             onPlaybackError={onPlaybackError}
+            onClose={onClose}
           />
         ) : (
           <video
@@ -2226,15 +2269,28 @@ function CinemaPlayerModal({
       </div>
 
       {/* Top bar */}
-      <div className={`cinema-topbar ${controlsVisible ? "visible" : ""}`} onClick={(e) => e.stopPropagation()}>
+      <div className={`cinema-top-bar cinema-topbar ${controlsVisible ? "visible" : ""}`} onClick={(e) => e.stopPropagation()}>
         <div className="cinema-topbar-left">
+          <button
+            type="button"
+            className="cinema-back-btn"
+            onClick={onClose}
+            title="Quitter le stream et revenir en arrière (Échap)"
+          >
+            <ArrowLeft size={18} />
+            <span>Retour</span>
+          </button>
           <div className="cinema-topbar-lock">
             <span>🔒</span>
             <span className="cinema-topbar-title">{playerState.title}</span>
           </div>
-          <span className="cinema-topbar-quality">4K HDR</span>
+          {playerState.type === "live" ? (
+            <span className="cinema-topbar-live-badge">EN DIRECT</span>
+          ) : (
+            <span className="cinema-topbar-quality">4K HDR</span>
+          )}
         </div>
-        <button className="cinema-close-btn" onClick={onClose} title="Fermer">
+        <button className="cinema-close-btn" onClick={onClose} title="Fermer (Échap)">
           <X size={20} />
         </button>
       </div>

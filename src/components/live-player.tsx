@@ -4,6 +4,7 @@
 
 import {
   AlertCircle,
+  ArrowLeft,
   ExternalLink,
   History,
   Loader2,
@@ -16,6 +17,7 @@ import {
   RotateCw,
   Volume2,
   VolumeX,
+  X,
 } from "lucide-react";
 import type mpegts from "mpegts.js";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -45,6 +47,7 @@ interface LivePlayerProps {
   hasTimeshiftArchive?: boolean;
   onPlaybackSuccess?: () => void;
   onPlaybackError?: () => void;
+  onClose?: () => void;
 }
 
 function formatDelay(delay: number): string {
@@ -73,6 +76,7 @@ export function LivePlayer({
   hasTimeshiftArchive = true,
   onPlaybackSuccess,
   onPlaybackError,
+  onClose,
 }: LivePlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -120,6 +124,22 @@ export function LivePlayer({
       setIsMuted(videoRef.current.muted);
     }
   }, []);
+
+  useEffect(() => {
+    if (!onClose) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" || e.key === "Backspace") {
+        const activeTag = document.activeElement?.tagName.toLowerCase();
+        if (e.key === "Backspace" && (activeTag === "input" || activeTag === "textarea")) {
+          return;
+        }
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
@@ -552,6 +572,33 @@ export function LivePlayer({
           <small style={{ color: "var(--muted, #9aa2ae)", fontSize: 12 }}>
             {channelName} (#{streamId}) {isTimeshift && timeshiftLabel ? `· ${timeshiftLabel}` : ""}
           </small>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                pointerEvents: "auto",
+                marginTop: 10,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "8px 18px",
+                borderRadius: 24,
+                background: "rgba(255, 255, 255, 0.12)",
+                border: "1px solid rgba(255, 255, 255, 0.25)",
+                color: "#fff",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                backdropFilter: "blur(8px)",
+                transition: "all 0.2s ease",
+              }}
+              title="Quitter le chargement et revenir en arrière (Échap)"
+            >
+              <ArrowLeft size={16} />
+              <span>Annuler / Retour</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -582,6 +629,16 @@ export function LivePlayer({
             <button onClick={handleRetry} className="button button-primary compact">
               <RefreshCw size={15} /> Réessayer
             </button>
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="button button-ghost compact"
+                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+              >
+                <ArrowLeft size={15} /> Revenir aux chaînes
+              </button>
+            )}
             {isTimeshift && onExitTimeshift && (
               <button onClick={onExitTimeshift} className="button button-ghost compact">
                 Retourner au direct
@@ -611,13 +668,25 @@ export function LivePlayer({
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          zIndex: 5,
+          zIndex: 15,
           pointerEvents: "none",
           transition: "opacity 0.25s",
-          opacity: showControls || !isPlaying ? 1 : 0,
+          opacity: showControls || !isPlaying || loading ? 1 : 0,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8, pointerEvents: "auto" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, pointerEvents: "auto" }}>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="nyx-back-btn"
+              title="Quitter le flux et revenir en arrière (Échap)"
+              aria-label="Retour"
+            >
+              <ArrowLeft size={16} />
+              <span>Retour</span>
+            </button>
+          )}
           <strong className="nyx-player-channel">{channelName}</strong>
           {isTimeshift ? (
             <div
@@ -705,6 +774,18 @@ export function LivePlayer({
             >
               <ExternalLink size={13} />
               <span>VLC</span>
+            </button>
+          )}
+
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="nyx-close-btn"
+              title="Fermer la lecture (Échap)"
+              aria-label="Fermer"
+            >
+              <X size={18} />
             </button>
           )}
         </div>
