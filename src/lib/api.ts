@@ -19,7 +19,7 @@ type ApiErrorBody = { detail?: string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60000);
+  const timer = setTimeout(() => controller.abort(), 90000);
   try {
     const response = await fetch(`${apiBaseUrl}${path}`, {
       ...init,

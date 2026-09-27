@@ -15,11 +15,11 @@ class Settings(BaseSettings):
     secret_key: str | None = None
     secret_key_path: Path = BACKEND_DIR / "data" / ".secret.key"
     cors_origins: str = "http://localhost:3000,http://localhost:3001,https://iptv-mu-gilt.vercel.app,https://fluxa-iptv.abtrunk4.chatgpt.site"
-    request_timeout_seconds: float = 20.0
-    live_cache_seconds: int = 1800
-    vod_cache_seconds: int = 21600
-    series_cache_seconds: int = 21600
-    epg_cache_seconds: int = 900
+    request_timeout_seconds: float = 65.0
+    live_cache_seconds: int = 86400
+    vod_cache_seconds: int = 86400
+    series_cache_seconds: int = 86400
+    epg_cache_seconds: int = 3600
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",

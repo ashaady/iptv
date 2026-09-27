@@ -42,8 +42,16 @@ class XtreamClient:
             "User-Agent": "IPTVSmartersPro/1.0.0 (Linux; Android 11)",
             "Accept": "application/json, */*",
         }
+        # Actions volumineuses (catalogues complets avec des dizaines de milliers de lignes)
+        is_heavy_action = action in {"get_live_streams", "get_vod_streams", "get_series"} and not parameters.get("category_id")
+        req_timeout = httpx.Timeout(
+            connect=15.0,
+            read=80.0 if is_heavy_action else max(30.0, self.timeout),
+            write=15.0,
+            pool=15.0,
+        )
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, headers=headers) as client:
+            async with httpx.AsyncClient(timeout=req_timeout, follow_redirects=True, headers=headers) as client:
                 response = await client.get(self.endpoint, params=params)
                 response.raise_for_status()
                 return response.json()
@@ -117,18 +125,32 @@ async def cached_action(profile_id: str, action: str, ttl_seconds: int, **parame
     suffix = json.dumps(parameters, sort_keys=True, separators=(",", ":"))
     cache_key = f"{profile_id}:{action}:{suffix}"
     cached = db.fetch_one("SELECT payload, expires_at FROM api_cache WHERE cache_key = ?", (cache_key,))
-    if cached and float(cached["expires_at"]) > time.time():
+    now = time.time()
+    if cached and float(cached["expires_at"]) > now:
         return json.loads(cached["payload"])
+
     _, client = profile_client(profile_id)
-    payload = await client.request(action, **parameters)
-    db.execute(
-        """INSERT INTO api_cache(cache_key, profile_id, payload, expires_at, updated_at)
-           VALUES(?, ?, ?, ?, ?)
-           ON CONFLICT(cache_key) DO UPDATE SET payload=excluded.payload,
-           expires_at=excluded.expires_at, updated_at=excluded.updated_at""",
-        (cache_key, profile_id, json.dumps(payload), time.time() + ttl_seconds, utc_now()),
-    )
-    return payload
+    try:
+        payload = await client.request(action, **parameters)
+        db.execute(
+            """INSERT INTO api_cache(cache_key, profile_id, payload, expires_at, updated_at)
+               VALUES(?, ?, ?, ?, ?)
+               ON CONFLICT(cache_key) DO UPDATE SET payload=excluded.payload,
+               expires_at=excluded.expires_at, updated_at=excluded.updated_at""",
+            (cache_key, profile_id, json.dumps(payload), now + ttl_seconds, utc_now()),
+        )
+        return payload
+    except Exception as exc:
+        # En cas de timeout ou indisponibilité temporaire du fournisseur IPTV, on réutilise le cache existant !
+        if cached and cached["payload"]:
+            print(f"[Fluxa] Avertissement: échec réseau pour {action} ({exc}), utilisation du cache sauvegardé.")
+            # Prolonge la validité pour éviter de saturer le serveur
+            db.execute(
+                "UPDATE api_cache SET expires_at = ?, updated_at = ? WHERE cache_key = ?",
+                (now + 7200, utc_now(), cache_key),
+            )
+            return json.loads(cached["payload"])
+        raise
 
 
 def _rewrite_playlist(playlist: str, base_url: str) -> str:

@@ -5,6 +5,7 @@ const fs = require("fs");
 const { spawn, spawnSync } = require("child_process");
 
 app.disableHardwareAcceleration();
+app.commandLine.appendSwitch("disable-gpu");
 
 // La version de développement ne doit jamais prendre le verrou ni les données
 // de la version installée. Sinon un clic sur Fluxa IPTV réactive Electron dev.
@@ -20,6 +21,10 @@ app.on("second-instance", () => {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+});
+
+app.on("child-process-gone", (event, details) => {
+  console.warn("[Fluxa] Processus enfant terminé (non-fatal):", details.type, details.reason);
 });
 
 const DEV_FRONTEND_PORT = 3001;
