@@ -100,6 +100,7 @@ export function LivePlayer({
 
   useEffect(() => {
     setUseTranscode(false);
+    recoveryAttemptsRef.current = 0;
   }, [streamId]);
 
   useEffect(() => {
@@ -113,6 +114,7 @@ export function LivePlayer({
   }, [url, channelName]);
 
   const handleRetry = useCallback(() => {
+    recoveryAttemptsRef.current = 0;
     setError(null);
     setLoading(true);
     setRetryCount((prev) => prev + 1);
@@ -280,8 +282,17 @@ export function LivePlayer({
 
       const attempt = recoveryAttemptsRef.current + 1;
       recoveryAttemptsRef.current = attempt;
-      const delay = Math.min(1000 * 2 ** Math.min(attempt - 1, 3), 8000);
-      console.warn(`[LivePlayer] ${reason}. Reconnexion dans ${delay} ms (tentative ${attempt}).`);
+
+      if (attempt > 3) {
+        console.warn(`[LivePlayer] Arrêt après ${attempt - 1} tentatives de reconnexion: ${reason}`);
+        setLoading(false);
+        setError("Ce flux est temporairement inaccessible sur le serveur IPTV (serveur distant ne répond pas).");
+        onPlaybackError?.();
+        return;
+      }
+
+      const delay = Math.min(1000 * 2 ** Math.min(attempt - 1, 3), 4000);
+      console.warn(`[LivePlayer] ${reason}. Reconnexion dans ${delay} ms (tentative ${attempt}/3).`);
       setLoading(true);
       reconnectTimer = setTimeout(() => {
         if (!isCancelled) setRetryCount((value) => value + 1);
@@ -373,10 +384,14 @@ export function LivePlayer({
           }
 
           player.on(mpegtsModule.Events.ERROR, (errorType: string, errorDetail: string) => {
-            console.error("Erreur flux live mpegts:", errorType, errorDetail);
+            console.warn("[LivePlayer] Incident flux live mpegts:", errorType, errorDetail);
             if (isCancelled) return;
             if (errorType === mpegtsModule.ErrorTypes.NETWORK_ERROR) {
-              scheduleRecovery("Le serveur IPTV a interrompu le flux");
+              if (errorDetail === "HttpStatusCodeInvalid") {
+                scheduleRecovery("Statut HTTP invalide (502/404) renvoyé par le fournisseur IPTV");
+              } else {
+                scheduleRecovery("Interruption réseau du serveur IPTV");
+              }
               return;
             } else {
               // Si le codec audio/vidéo n'est pas supporté en natif (ex: EAC-3/AC-3), tenter automatiquement la conversion AAC via FFmpeg
@@ -385,6 +400,7 @@ export function LivePlayer({
                 setUseTranscode(true);
                 return;
               }
+              onPlaybackError?.();
               setError("Format vidéo/audio non décodable par le lecteur interne. Cliquez sur « Lire dans VLC » ci-dessous.");
             }
             setLoading(false);

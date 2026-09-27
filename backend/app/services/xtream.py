@@ -187,19 +187,29 @@ async def proxy_url(url: str, range_header: str | None = None) -> Response:
     # Connect timeout à 10s pour ne pas bloquer si un serveur est mort, read=None pour flux continu
     timeout = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=None)
     client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
-    try:
-        request = client.build_request("GET", url, headers=headers)
-        response = await client.send(request, stream=True)
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        await client.aclose()
-        raise HTTPException(
-            status_code=502,
-            detail=f"Le serveur IPTV a renvoyé l'erreur {exc.response.status_code}.",
-        ) from exc
-    except httpx.HTTPError as exc:
-        await client.aclose()
-        raise HTTPException(status_code=502, detail="Le flux vidéo est indisponible.") from exc
+    response = None
+    for attempt in range(2):
+        try:
+            request = client.build_request("GET", url, headers=headers)
+            response = await client.send(request, stream=True)
+            response.raise_for_status()
+            break
+        except (httpx.HTTPStatusError, httpx.HTTPError) as exc:
+            if response:
+                try:
+                    await response.aclose()
+                except Exception:
+                    pass
+                response = None
+            if attempt == 0:
+                await asyncio.sleep(0.35)
+                continue
+            await client.aclose()
+            status_code = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else 502
+            raise HTTPException(
+                status_code=502,
+                detail=f"Le serveur IPTV a renvoyé l'erreur {status_code}." if isinstance(exc, httpx.HTTPStatusError) else "Le flux vidéo est indisponible.",
+            ) from exc
 
     content_type = response.headers.get("content-type", "application/octet-stream")
     if "mpegurl" in content_type or urlparse(str(response.url)).path.lower().endswith(".m3u8"):
@@ -256,13 +266,25 @@ async def transcode_stream(url: str) -> StreamingResponse:
     }
     timeout = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=None)
     client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
-    try:
-        request = client.build_request("GET", url, headers=headers)
-        upstream_res = await client.send(request, stream=True)
-        upstream_res.raise_for_status()
-    except Exception as exc:
-        await client.aclose()
-        raise HTTPException(status_code=502, detail="Le flux vidéo est indisponible pour le transcodage.") from exc
+    upstream_res = None
+    for attempt in range(2):
+        try:
+            request = client.build_request("GET", url, headers=headers)
+            upstream_res = await client.send(request, stream=True)
+            upstream_res.raise_for_status()
+            break
+        except Exception as exc:
+            if upstream_res:
+                try:
+                    await upstream_res.aclose()
+                except Exception:
+                    pass
+                upstream_res = None
+            if attempt == 0:
+                await asyncio.sleep(0.35)
+                continue
+            await client.aclose()
+            raise HTTPException(status_code=502, detail="Le flux vidéo est indisponible pour le transcodage.") from exc
 
     cmd = [
         ffmpeg_bin,
